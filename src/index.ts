@@ -382,7 +382,7 @@ function createServer({ config }: { config?: any } = {}) {
   )
 
   server.tool("crm_search_objects",
-    "Search CRM objects using filters",
+    "Search CRM objects using filters. For owner searches, use hubspot_owner_id with the owner's ID (use hubspot_constants_lookup to find owner IDs by name). For deal stage searches, use dealstage with the stage ID (use hubspot_constants_lookup to find stage IDs by name).",
     {
       objectType: z.enum(['companies', 'contacts', 'deals', 'tickets', 'products', 'line_items', 'quotes', 'custom']),
       filterGroups: z.array(z.object({
@@ -2504,6 +2504,164 @@ function createServer({ config }: { config?: any } = {}) {
       const endpoint = '/crm/v3/objects/products/batch/update'
       return await makeApiRequestWithErrorHandling(hubspotAccessToken, endpoint, {}, 'POST', { inputs: params.inputs })
     })
+  )
+
+  // Add this new tool for HubSpot constants lookup
+  server.tool("hubspot_constants_lookup",
+    "Lookup HubSpot constants like owner IDs and deal stage IDs. Use 'owners' to get all owners, 'stages' to get all deal stages, or specific names to get individual IDs.",
+    {
+      type: z.enum(['owners', 'stages', 'owner', 'stage']),
+      name: z.string().optional()
+    },
+    async (params) => {
+      return handleEndpoint(async () => {
+        const HUBSPOT_OWNERS = {
+          Glen: '1937082473',
+          Mitch: '76302036',
+          Nicole: '257538566',
+          Imran: '258119804',
+          Michael: '263717248',
+          Andrew: '704388018',
+          Team: '1427997302',
+          Melissa: '79875014'
+        }
+
+        const HUBSPOT_STAGES = {
+          'First Conversation': '41725561',
+          'Discovery Meeting Booked': 'appointmentscheduled',
+          'Demo Deep Dive': 'qualifiedtobuy',
+          'Proposal Review': '991297361',
+          'Closed Won Pilot': '53116692',
+          'Closed Won Annual': '998573881',
+          'Paused': '1006854226',
+          'Closed Lost': 'closedlost',
+          'Churned': '1006854227'
+        }
+
+        if (params.type === 'owners') {
+          return formatResponse(HUBSPOT_OWNERS)
+        } else if (params.type === 'stages') {
+          return formatResponse(HUBSPOT_STAGES)
+        } else if (params.type === 'owner' && params.name) {
+          const ownerId = HUBSPOT_OWNERS[params.name as keyof typeof HUBSPOT_OWNERS]
+          if (!ownerId) {
+            return formatResponse(`Owner '${params.name}' not found. Available owners: ${Object.keys(HUBSPOT_OWNERS).join(', ')}`)
+          }
+          return formatResponse({ name: params.name, id: ownerId })
+        } else if (params.type === 'stage' && params.name) {
+          const stageId = HUBSPOT_STAGES[params.name as keyof typeof HUBSPOT_STAGES]
+          if (!stageId) {
+            return formatResponse(`Stage '${params.name}' not found. Available stages: ${Object.keys(HUBSPOT_STAGES).join(', ')}`)
+          }
+          return formatResponse({ name: params.name, id: stageId })
+        } else {
+          return formatResponse('Please specify a valid type and optionally a name')
+        }
+      })
+    }
+  )
+
+  // Convenience tool for searching deals by owner name
+  server.tool("crm_search_deals_by_owner_name",
+    "Search deals by owner name (e.g., 'Glen', 'Mitch'). This tool automatically looks up the owner ID.",
+    {
+      ownerName: z.string(),
+      properties: z.array(z.string()).optional(),
+      limit: z.number().min(1).max(100).optional(),
+      additionalFilters: z.array(z.object({
+        propertyName: z.string(),
+        operator: z.enum(['EQ', 'NEQ', 'LT', 'LTE', 'GT', 'GTE', 'BETWEEN', 'IN', 'NOT_IN', 'HAS_PROPERTY', 'NOT_HAS_PROPERTY', 'CONTAINS_TOKEN', 'NOT_CONTAINS_TOKEN']),
+        value: z.any()
+      })).optional()
+    },
+    async (params) => {
+      return handleEndpoint(async () => {
+        const HUBSPOT_OWNERS = {
+          Glen: '1937082473',
+          Mitch: '76302036',
+          Nicole: '257538566',
+          Imran: '258119804',
+          Michael: '263717248',
+          Andrew: '704388018',
+          Team: '1427997302',
+          Melissa: '79875014'
+        }
+
+        const ownerId = HUBSPOT_OWNERS[params.ownerName as keyof typeof HUBSPOT_OWNERS]
+        if (!ownerId) {
+          return formatResponse(`Owner '${params.ownerName}' not found. Available owners: ${Object.keys(HUBSPOT_OWNERS).join(', ')}`)
+        }
+
+        const filters = [{
+          propertyName: 'hubspot_owner_id',
+          operator: 'EQ' as const,
+          value: ownerId
+        }]
+
+        if (params.additionalFilters) {
+          filters.push(...params.additionalFilters)
+        }
+
+        const endpoint = '/crm/v3/objects/deals/search'
+        return await makeApiRequestWithErrorHandling(hubspotAccessToken, endpoint, {}, 'POST', {
+          filterGroups: [{ filters }],
+          properties: params.properties,
+          limit: params.limit
+        })
+      })
+    }
+  )
+
+  // Convenience tool for searching deals by stage name
+  server.tool("crm_search_deals_by_stage_name",
+    "Search deals by stage name (e.g., 'Demo Deep Dive', 'Closed Won'). This tool automatically looks up the stage ID.",
+    {
+      stageName: z.string(),
+      properties: z.array(z.string()).optional(),
+      limit: z.number().min(1).max(100).optional(),
+      additionalFilters: z.array(z.object({
+        propertyName: z.string(),
+        operator: z.enum(['EQ', 'NEQ', 'LT', 'LTE', 'GT', 'GTE', 'BETWEEN', 'IN', 'NOT_IN', 'HAS_PROPERTY', 'NOT_HAS_PROPERTY', 'CONTAINS_TOKEN', 'NOT_CONTAINS_TOKEN']),
+        value: z.any()
+      })).optional()
+    },
+    async (params) => {
+      return handleEndpoint(async () => {
+        const HUBSPOT_STAGES = {
+          'First Conversation': '41725561',
+          'Discovery Meeting Booked': 'appointmentscheduled',
+          'Demo Deep Dive': 'qualifiedtobuy',
+          'Proposal Review': '991297361',
+          'Closed Won Pilot': '53116692',
+          'Closed Won Annual': '998573881',
+          'Paused': '1006854226',
+          'Closed Lost': 'closedlost',
+          'Churned': '1006854227'
+        }
+
+        const stageId = HUBSPOT_STAGES[params.stageName as keyof typeof HUBSPOT_STAGES]
+        if (!stageId) {
+          return formatResponse(`Stage '${params.stageName}' not found. Available stages: ${Object.keys(HUBSPOT_STAGES).join(', ')}`)
+        }
+
+        const filters = [{
+          propertyName: 'dealstage',
+          operator: 'EQ' as const,
+          value: stageId
+        }]
+
+        if (params.additionalFilters) {
+          filters.push(...params.additionalFilters)
+        }
+
+        const endpoint = '/crm/v3/objects/deals/search'
+        return await makeApiRequestWithErrorHandling(hubspotAccessToken, endpoint, {}, 'POST', {
+          filterGroups: [{ filters }],
+          properties: params.properties,
+          limit: params.limit
+        })
+      })
+    }
   )
 
   return server.server
