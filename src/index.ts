@@ -2602,9 +2602,42 @@ function createServer({ config }: { config?: any } = {}) {
 
         const filters = []
 
+        // -----------------------------------------------------------
+        // Helpers to make name → ID lookup less rigid (case / phrasing)
+        // -----------------------------------------------------------
+        const normalize = (str: string) => str.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+
+        const findStageId = (name: string): string | null => {
+          const normName = normalize(name)
+
+          // 1. Exact (case-insensitive)
+          for (const [label, id] of Object.entries(HUBSPOT_STAGES)) {
+            if (normalize(label) === normName) return id
+          }
+          // 2. Sub-string containment in either direction
+          for (const [label, id] of Object.entries(HUBSPOT_STAGES)) {
+            const normLabel = normalize(label)
+            if (normLabel.includes(normName) || normName.includes(normLabel)) return id
+          }
+          // 3. Common typo – "one" → "won"
+          if (normName.includes('one')) {
+            return findStageId(normName.replace(/one/g, 'won'))
+          }
+          return null
+        }
+
+        const findOwnerId = (name: string): string | null => {
+          const normName = normalize(name)
+          for (const [label, id] of Object.entries(HUBSPOT_OWNERS)) {
+            const normLabel = normalize(label)
+            if (normLabel === normName || normName.includes(normLabel)) return id
+          }
+          return null
+        }
+
         // Add owner filter if specified
         if (params.ownerName) {
-          const ownerId = HUBSPOT_OWNERS[params.ownerName as keyof typeof HUBSPOT_OWNERS]
+          const ownerId = findOwnerId(params.ownerName)
           if (!ownerId) {
             return formatResponse(`Owner '${params.ownerName}' not found. Available owners: ${Object.keys(HUBSPOT_OWNERS).join(', ')}`)
           }
@@ -2617,7 +2650,7 @@ function createServer({ config }: { config?: any } = {}) {
 
         // Add stage filter if specified
         if (params.stageName) {
-          const stageId = HUBSPOT_STAGES[params.stageName as keyof typeof HUBSPOT_STAGES]
+          const stageId = findStageId(params.stageName)
           if (!stageId) {
             return formatResponse(`Stage '${params.stageName}' not found. Available stages: ${Object.keys(HUBSPOT_STAGES).join(', ')}`)
           }
@@ -2632,18 +2665,28 @@ function createServer({ config }: { config?: any } = {}) {
         if (params.additionalFilters) {
           for (const filter of params.additionalFilters) {
             if (filter.propertyName === 'hubspot_owner_id' && typeof filter.value === 'string') {
-              // Check if the value is an owner name that needs to be converted to ID
-              const ownerId = HUBSPOT_OWNERS[filter.value as keyof typeof HUBSPOT_OWNERS]
+              const ownerId = findOwnerId(filter.value)
               if (ownerId) {
                 filters.push({
                   ...filter,
                   value: ownerId
                 })
               } else if (/^\d+$/.test(filter.value)) {
-                // It's already an ID (all digits)
                 filters.push(filter)
               } else {
                 return formatResponse(`Owner '${filter.value}' not found. Available owners: ${Object.keys(HUBSPOT_OWNERS).join(', ')}`)
+              }
+            } else if (filter.propertyName === 'dealstage' && typeof filter.value === 'string') {
+              const stageId = findStageId(filter.value)
+              if (stageId) {
+                filters.push({
+                  ...filter,
+                  value: stageId
+                })
+              } else if (/^\d+$/.test(filter.value)) {
+                filters.push(filter)
+              } else {
+                return formatResponse(`Stage '${filter.value}' not found. Available stages: ${Object.keys(HUBSPOT_STAGES).join(', ')}`)
               }
             } else {
               filters.push(filter)
