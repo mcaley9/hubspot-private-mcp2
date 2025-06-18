@@ -382,7 +382,7 @@ function createServer({ config }: { config?: any } = {}) {
   )
 
   server.tool("crm_search_objects",
-    "Search CRM objects using filters. For owner searches, use hubspot_owner_id with the owner's ID (use hubspot_constants_lookup to find owner IDs by name). For deal stage searches, use dealstage with the stage ID (use hubspot_constants_lookup to find stage IDs by name).",
+    "Low-level CRM object search using filters. For searching deals by owner or stage names, prefer using crm_search_deals_smart instead. This tool requires exact IDs for filtering.",
     {
       objectType: z.enum(['companies', 'contacts', 'deals', 'tickets', 'products', 'line_items', 'quotes', 'custom']),
       filterGroups: z.array(z.object({
@@ -2614,7 +2614,7 @@ function createServer({ config }: { config?: any } = {}) {
 
   // Convenience tool for searching deals by stage name
   server.tool("crm_search_deals_by_stage_name",
-    "Search deals by stage name (e.g., 'Demo Deep Dive', 'Closed Won'). This tool automatically looks up the stage ID.",
+    "Search deals by stage name (e.g., 'Demo Deep Dive', 'Closed Won'). This tool automatically looks up the stage ID. You can also filter by owner name using additionalFilters.",
     {
       stageName: z.string(),
       properties: z.array(z.string()).optional(),
@@ -2627,6 +2627,17 @@ function createServer({ config }: { config?: any } = {}) {
     },
     async (params) => {
       return handleEndpoint(async () => {
+        const HUBSPOT_OWNERS = {
+          Glen: '1937082473',
+          Mitch: '76302036',
+          Nicole: '257538566',
+          Imran: '258119804',
+          Michael: '263717248',
+          Andrew: '704388018',
+          Team: '1427997302',
+          Melissa: '79875014'
+        }
+
         const HUBSPOT_STAGES = {
           'First Conversation': '41725561',
           'Discovery Meeting Booked': 'appointmentscheduled',
@@ -2650,8 +2661,27 @@ function createServer({ config }: { config?: any } = {}) {
           value: stageId
         }]
 
+        // Process additional filters and convert owner names to IDs
         if (params.additionalFilters) {
-          filters.push(...params.additionalFilters)
+          for (const filter of params.additionalFilters) {
+            if (filter.propertyName === 'hubspot_owner_id' && typeof filter.value === 'string') {
+              // Check if the value is an owner name that needs to be converted to ID
+              const ownerId = HUBSPOT_OWNERS[filter.value as keyof typeof HUBSPOT_OWNERS]
+              if (ownerId) {
+                filters.push({
+                  ...filter,
+                  value: ownerId
+                })
+              } else if (/^\d+$/.test(filter.value)) {
+                // It's already an ID (all digits)
+                filters.push(filter)
+              } else {
+                return formatResponse(`Owner '${filter.value}' not found. Available owners: ${Object.keys(HUBSPOT_OWNERS).join(', ')}`)
+              }
+            } else {
+              filters.push(filter)
+            }
+          }
         }
 
         const endpoint = '/crm/v3/objects/deals/search'
@@ -2660,6 +2690,113 @@ function createServer({ config }: { config?: any } = {}) {
           properties: params.properties,
           limit: params.limit
         })
+      })
+    }
+  )
+
+  // Flexible deal search tool that handles owner names and stage names
+  server.tool("crm_search_deals_smart",
+    "Search deals flexibly by owner name, stage name, or both. Use this for queries like 'all deals for Glen', 'all deals in Proposal Review', or 'all First Conversation deals for Glen'.",
+    {
+      ownerName: z.string().optional().describe("Owner name like 'Glen', 'Mitch', etc. Leave empty to get deals for all owners."),
+      stageName: z.string().optional().describe("Stage name like 'First Conversation', 'Demo Deep Dive', etc. Leave empty to get deals in all stages."),
+      properties: z.array(z.string()).optional(),
+      limit: z.number().min(1).max(100).optional(),
+      additionalFilters: z.array(z.object({
+        propertyName: z.string(),
+        operator: z.enum(['EQ', 'NEQ', 'LT', 'LTE', 'GT', 'GTE', 'BETWEEN', 'IN', 'NOT_IN', 'HAS_PROPERTY', 'NOT_HAS_PROPERTY', 'CONTAINS_TOKEN', 'NOT_CONTAINS_TOKEN']),
+        value: z.any()
+      })).optional()
+    },
+    async (params) => {
+      return handleEndpoint(async () => {
+        const HUBSPOT_OWNERS = {
+          Glen: '1937082473',
+          Mitch: '76302036',
+          Nicole: '257538566',
+          Imran: '258119804',
+          Michael: '263717248',
+          Andrew: '704388018',
+          Team: '1427997302',
+          Melissa: '79875014'
+        }
+
+        const HUBSPOT_STAGES = {
+          'First Conversation': '41725561',
+          'Discovery Meeting Booked': 'appointmentscheduled',
+          'Demo Deep Dive': 'qualifiedtobuy',
+          'Proposal Review': '991297361',
+          'Closed Won Pilot': '53116692',
+          'Closed Won Annual': '998573881',
+          'Paused': '1006854226',
+          'Closed Lost': 'closedlost',
+          'Churned': '1006854227'
+        }
+
+        const filters = []
+
+        // Add owner filter if specified
+        if (params.ownerName) {
+          const ownerId = HUBSPOT_OWNERS[params.ownerName as keyof typeof HUBSPOT_OWNERS]
+          if (!ownerId) {
+            return formatResponse(`Owner '${params.ownerName}' not found. Available owners: ${Object.keys(HUBSPOT_OWNERS).join(', ')}`)
+          }
+          filters.push({
+            propertyName: 'hubspot_owner_id',
+            operator: 'EQ' as const,
+            value: ownerId
+          })
+        }
+
+        // Add stage filter if specified
+        if (params.stageName) {
+          const stageId = HUBSPOT_STAGES[params.stageName as keyof typeof HUBSPOT_STAGES]
+          if (!stageId) {
+            return formatResponse(`Stage '${params.stageName}' not found. Available stages: ${Object.keys(HUBSPOT_STAGES).join(', ')}`)
+          }
+          filters.push({
+            propertyName: 'dealstage',
+            operator: 'EQ' as const,
+            value: stageId
+          })
+        }
+
+        // Process additional filters and convert owner names to IDs
+        if (params.additionalFilters) {
+          for (const filter of params.additionalFilters) {
+            if (filter.propertyName === 'hubspot_owner_id' && typeof filter.value === 'string') {
+              // Check if the value is an owner name that needs to be converted to ID
+              const ownerId = HUBSPOT_OWNERS[filter.value as keyof typeof HUBSPOT_OWNERS]
+              if (ownerId) {
+                filters.push({
+                  ...filter,
+                  value: ownerId
+                })
+              } else if (/^\d+$/.test(filter.value)) {
+                // It's already an ID (all digits)
+                filters.push(filter)
+              } else {
+                return formatResponse(`Owner '${filter.value}' not found. Available owners: ${Object.keys(HUBSPOT_OWNERS).join(', ')}`)
+              }
+            } else {
+              filters.push(filter)
+            }
+          }
+        }
+
+        // If no filters specified, just get all deals
+        const endpoint = '/crm/v3/objects/deals/search'
+        const body: any = {
+          properties: params.properties,
+          limit: params.limit
+        }
+
+        // Only add filterGroups if we have filters
+        if (filters.length > 0) {
+          body.filterGroups = [{ filters }]
+        }
+
+        return await makeApiRequestWithErrorHandling(hubspotAccessToken, endpoint, {}, 'POST', body)
       })
     }
   )
