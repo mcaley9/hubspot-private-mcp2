@@ -313,14 +313,16 @@ function createServer({ config }: { config?: any } = {}) {
       objectType: z.enum(['companies', 'contacts', 'deals', 'tickets', 'products', 'line_items', 'quotes', 'custom']),
       objectId: z.string(),
       properties: z.array(z.string()).optional(),
-      associations: z.array(z.string()).optional()
+      associations: z.array(z.string()).optional(),
+      propertiesWithHistory: z.array(z.string()).optional()
     },
     async (params) => {
       return handleEndpoint(async () => {
         const endpoint = `/crm/v3/objects/${params.objectType}/${params.objectId}`
         return await makeApiRequestWithErrorHandling(hubspotAccessToken, endpoint, {
           properties: params.properties?.join(','),
-          associations: params.associations?.join(',')
+          associations: params.associations?.join(','),
+          propertiesWithHistory: params.propertiesWithHistory?.join(',')
         })
       })
     }
